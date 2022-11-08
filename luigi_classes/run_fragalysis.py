@@ -196,6 +196,46 @@ class AlignTargetToReference(luigi.Task):
     log_directory = luigi.Parameter(default=DirectoriesConfig().log_directory)
     date = luigi.DateParameter(default=datetime.datetime.now())
 
+
+    def compute_timeout_multiplier(target):
+        with open(target, "r") as readfile:
+            chains = []
+            n_atoms = 0
+            for row in readfile:
+                # only parse atom entries, ignore header and heteroatoms.
+                if "ATOM" in row.split()[0]:
+
+                    # update atom counter
+                    n_atoms += 1
+
+                    # get the chain ID; best to get column right-to-left \
+                    # because columns 0 and 1 sometimes get merged.
+                    chain = row.split()[-8]
+
+                    # make sure this is a single-letter chain ID.
+                    if len(chain) > 1 or not chain.isalpha():
+                        continue
+
+                    # add to collection if this is a newly observed chain.
+                    if not chain in chains:
+                        chains.append(chain)
+
+            n_chains = len(chains)
+            n_atom_per_chain = n_atoms/n_chains
+
+            """     
+            Now compute the timeout multiplier. We know that a 2-chain 
+            system with 800 atoms aligns well within the timeout period,
+            so use this as the baseline.
+            """
+            chain_multiplier = n_chains / 2 if n_chains > 2 else 1
+            atoms_per_chain_multiplier = n_atom_per_chain / 800 if n_atom_per_chain > 800 else 1
+
+            return int(chain_multiplier * atoms_per_chain_multiplier)
+            
+    # multiply the timeout variable to account for larger system sizes.
+    worker_timeout *= compute_timeout_multiplier(target)
+
     def requires(self):
         return UnalignTargetToReference(target=self.target)
 
